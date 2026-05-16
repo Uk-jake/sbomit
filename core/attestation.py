@@ -16,8 +16,8 @@ apart means a change to the server API never touches decoding logic, and the
 decoding can be unit-tested with no network.
 
 This is also where attestation *analysis* will live later — e.g. extracting the
-ptrace/material data that experiment.py's workflow description refers to. A
-placeholder, extract_used_files(), marks that seam.
+list of files/packages a build actually used from the eBPF attestor's output.
+A placeholder, extract_used_files(), marks that seam.
 
 Dependency position: imports nothing from other sbomit modules.
 """
@@ -179,19 +179,35 @@ def collect(src_dir: Path, dst_dir: Path) -> CollectResult:
 # Analysis (placeholder seam)
 # ──────────────────────────────────────────────────────────────────────────────
 def extract_used_files(decoded_path: Path) -> list[str]:
-    """Extract the list of files/packages actually used, from a decoded
-    attestation's eBPF/ptrace data.
+    """Extract the files/packages actually used during a build, from a decoded
+    attestation's eBPF environment-attestor data.
 
-    PLACEHOLDER. experiment.py's workflow describes a step that pulls the
-    ptrace module out of each attestation; that logic belongs here, next to
-    decoding, rather than in the experiment orchestrator. Implemented as a
-    no-op for now so the module seam exists without changing behavior.
+    PLACEHOLDER — not yet implemented. Returns [] for now.
+
+    What this is for:
+        decode() only unwraps the DSSE envelope so the in-toto Statement is
+        readable. Pulling the *meaningful* information out of that Statement —
+        which files were opened, which packages were read during the build —
+        is a separate concern, and this is its home (next to decoding, not in
+        the experiment orchestrator).
+
+    Why it is not implemented yet:
+        The list lives inside the in-toto Statement's `predicate`, written by
+        witness's eBPF attestor. Its exact JSON shape depends on the witness
+        version and attestor configuration, so this must be written against a
+        real decoded attestation (experiments/<project>/attestations/decoded/
+        *.decoded.json), not guessed.
+
+        NOTE: an earlier version of this docstring referred to a "ptrace
+        module". That was carried over from pre-eBPF documentation; the
+        pipeline uses the eBPF attestor now. The data source is the eBPF
+        attestor's output, not ptrace.
 
     Args:
         decoded_path: A file produced by decode().
 
     Returns:
         Currently always []. To be implemented against the real attestation
-        schema once the SBOM-coverage work needs it.
+        schema as part of the SBOM-coverage work.
     """
     return []
