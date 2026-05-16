@@ -67,8 +67,22 @@ class HygieneResult:
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _run(cmd: list[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
-    """Run a command, capturing output, never raising."""
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    """Run a command, capturing output, never raising.
+
+    If the executable itself is missing (e.g. 'go' or 'cargo' not installed),
+    subprocess.run raises FileNotFoundError. Hygiene is best-effort, so we
+    convert that into a non-zero CompletedProcess instead — callers already
+    branch on returncode, so a missing tool is reported, not crashed on.
+    """
+    try:
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=127,  # conventional shell code for "command not found"
+            stdout="",
+            stderr=f"{cmd[0]}: command not found",
+        )
 
 
 def _invoking_user() -> str:
@@ -260,8 +274,10 @@ def clean_go_testcache() -> None:
     Moved out of witness_runner.run_step (where it was a Go-specific wart in a
     build-system-agnostic module). pipeline.run() can call this before test
     steps when it knows the project is Go-based.
+
+    Uses _run so a missing 'go' executable is a no-op, not a crash.
     """
-    subprocess.run(["go", "clean", "-testcache"], capture_output=True)
+    _run(["go", "clean", "-testcache"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────

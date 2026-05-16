@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Optional
 
-from . import buildsystems, config
+from . import buildsystems, config, environment
 from .models import ProjectResult, StepResult, STATUS_SKIPPED
 from .witness_runner import run_step
 
@@ -47,40 +46,11 @@ def _resolve_witness() -> str:
     return shutil.which("witness") or str(SBOMIT_DIR / "witness")
 
 
-def warm_go_cache(project_dir: Path) -> None:
-    """Run 'go mod download' to populate the module cache before attestation.
-
-    NOTE: this is kept here for behavior-preservation only. Cache warming is
-    really an environment-hygiene concern and is a candidate to move into the
-    upcoming environment.py — together with the Go module cache permission
-    fix that the cri-o / cubefs failure reports call for ([CRIT]
-    prewarm_permission_denied). Left in place for now so this refactor step
-    changes structure, not behavior.
-    """
-    if (project_dir / "go.mod").exists():
-        print("Pre-warming Go module cache...")
-        result = subprocess.run(
-            ["go", "mod", "download"],
-            cwd=project_dir,
-            capture_output=True, text=True,
-        )
-        lines = (result.stdout + result.stderr).strip().splitlines()
-        for line in lines[-5:]:
-            print(line)
-        print("Go cache ready.")
-
-
-def warm_cargo_cache(project_dir: Path) -> None:
-    """Run 'cargo fetch' to populate the Cargo cache before attestation."""
-    if (project_dir / "Cargo.toml").exists():
-        print("Pre-warming Cargo cache...")
-        subprocess.run(["cargo", "fetch"], cwd=project_dir, capture_output=True)
-        print("Cargo cache ready.")
-
-
 def run(project_dir: Path,
         skip_targets: Optional[set[str]] = None,
-        prewarm: bool = False,
+        do_git_clean: bool = True,
+        do_go_cache: bool = True,
+        do_warm: bool = True,
         witness_path: Optional[str] = None,
         signing_key: Optional[Path] = None,
         attestations_root: Optional[Path] = None) -> ProjectResult:
@@ -90,7 +60,13 @@ def run(project_dir: Path,
         project_dir:       Path to the project to build/attest.
         skip_targets:      Extra step names to skip, on top of GLOBAL_SKIP and
                            the project's PROJECT_SKIP entry.
-        prewarm:           If True, warm the Go / Cargo dependency cache first.
+        do_git_clean:      Reset the project with `git clean -xfd` before
+                           attesting. Default True; set False to debug with
+                           build artifacts left in place.
+        do_go_cache:       Normalize Go module cache ownership before building.
+                           Default True.
+        do_warm:           Warm Go / Cargo dependency caches before building.
+                           Default True.
         witness_path:      Path to the witness binary (auto-resolved if None).
         signing_key:       Path to the signing key (defaults to
                            SBOMIT_DIR/signing.key).
@@ -124,10 +100,16 @@ def run(project_dir: Path,
     result.build_system = build_system.name
     print(f"Detected: {build_system.name} ({build_system.detect_file})")
 
-    # ── Pre-warm dependency caches if requested ───────────────────────────────
-    if prewarm:
-        warm_go_cache(project_dir)
-        warm_cargo_cache(project_dir)
+    # ── Prepare a clean, consistent environment ───────────────────────────────
+    # git clean -xfd, Go cache ownership normalization, dependency cache warming.
+    # Runs once, before any step. See environment.prepare_environment.
+    hygiene = environment.prepare_environment(
+        project_dir,
+        do_git_clean=do_git_clean,
+        do_go_cache=do_go_cache,
+        do_warm=do_warm,
+    )
+    result.hygiene = hygiene
 
     # ── Derive steps and apply skip curation ──────────────────────────────────
     steps = buildsystems.steps_for(build_system, project_dir)
