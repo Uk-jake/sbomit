@@ -1,0 +1,29 @@
+# ── Signing Keys - NEVER COMMIT ───────────────────────────────────────────────
+signing.key
+signing.pub
+
+# ── Witness Binary ────────────────────────────────────────────────────────────
+witness
+
+# ── Experiment Artifacts ──────────────────────────────────────────────────────
+# Generated fresh for each run. Add exceptions if you need to retain results.
+attestations/
+experiments/
+
+# ── Target Projects ───────────────────────────────────────────────────────────
+# Cloned projects are independent repositories and should not be tracked here.
+projects/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
