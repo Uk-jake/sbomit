@@ -20,8 +20,8 @@ from __future__ import annotations
 # These are Makefile bookkeeping targets, not real build steps.
 # ──────────────────────────────────────────────────────────────────────────────
 GLOBAL_SKIP: set[str] = {
-    "help", "all", "clean", "distclean", "mrproper",
-    ".PHONY", ".DEFAULT", ".SUFFIXES",
+    # "help", "all", "clean", "distclean", "mrproper",
+    # ".PHONY", ".DEFAULT", ".SUFFIXES",
 }
 
 
@@ -42,43 +42,43 @@ GLOBAL_SKIP: set[str] = {
 # ──────────────────────────────────────────────────────────────────────────────
 PROJECT_SKIP: dict[str, set[str]] = {
     "kyverno": {
-        "install-tools", "build-images", "ko-build", "docker-build",
-        "kind-create-cluster", "kind-delete-cluster", "deploy",
+        # "install-tools", "build-images", "ko-build", "docker-build",
+        # "kind-create-cluster", "kind-delete-cluster", "deploy",
     },
     "argo-cd": {
-        "mockgen", "gogen", "protogen", "protogen-fast", "openapigen",
-        "clientgen", "clidocsgen", "actionsdocsgen", "resourceiconsgen",
-        "codegen", "codegen-local", "codegen-local-fast",
-        "notification-catalog", "notification-docs",
-        "build-ui", "dep-ui", "dep-ui-local", "lint-ui", "lint-ui-local",
-        "image", "armimage", "builder-image", "test-tools-image",
-        "test-e2e", "test-e2e-local", "start-e2e", "start-e2e-local",
-        "debug-test-server", "debug-test-client", "start-test-k8s",
-        "install-tools-local", "install-test-tools-local",
-        "install-codegen-tools-local", "install-go-tools-local",
-        "release", "release-cli", "release-precheck",
-        "build-docs", "build-docs-local", "serve-docs", "serve-docs-local",
-        "manifests", "manifests-local",
-        "checksums", "snyk-container-tests", "snyk-non-container-tests",
-        "snyk-report", "list", "start", "start-local", "run",
-        "mod-vendor", "mod-vendor-local", "mod-download-local", "mod-download",
+        # "mockgen", "gogen", "protogen", "protogen-fast", "openapigen",
+        # "clientgen", "clidocsgen", "actionsdocsgen", "resourceiconsgen",
+        # "codegen", "codegen-local", "codegen-local-fast",
+        # "notification-catalog", "notification-docs",
+        # "build-ui", "dep-ui", "dep-ui-local", "lint-ui", "lint-ui-local",
+        # "image", "armimage", "builder-image", "test-tools-image",
+        # "test-e2e", "test-e2e-local", "start-e2e", "start-e2e-local",
+        # "debug-test-server", "debug-test-client", "start-test-k8s",
+        # "install-tools-local", "install-test-tools-local",
+        # "install-codegen-tools-local", "install-go-tools-local",
+        # "release", "release-cli", "release-precheck",
+        # "build-docs", "build-docs-local", "serve-docs", "serve-docs-local",
+        # "manifests", "manifests-local",
+        # "checksums", "snyk-container-tests", "snyk-non-container-tests",
+        # "snyk-report", "list", "start", "start-local", "run",
+        # "mod-vendor", "mod-vendor-local", "mod-download-local", "mod-download",
     },
     "flux2": {
-        "setup-kind", "cleanup-kind", "e2e", "test-with-kind",
-        "install-envtest", "setup-envtest", "envtest",
-        "setup-bootstrap-patch", "setup-image-automation", "tidy", "mod-tidy",
+        # "setup-kind", "cleanup-kind", "e2e", "test-with-kind",
+        # "install-envtest", "setup-envtest", "envtest",
+        # "setup-bootstrap-patch", "setup-image-automation", "tidy", "mod-tidy",
     },
     "protobom": {
-        "proto",
-        "help", "conformance-test", "conformance", "fakes",
-        "buf-format", "buf-lint",
+        # "proto",
+        # "help", "conformance-test", "conformance", "fakes",
+        # "buf-format", "buf-lint",
     },
     "in-toto": {
-        # Permission tests fail under sudo (root bypasses DAC checks).
-        # Affects py310, py311, py39, with-sslib-main.
-        "py310", "py311", "py39", "with-sslib-main",
-        # Python 3.8 incompatible with attrs>=26.0 (project dependency).
-        "py38",
+        # # Permission tests fail under sudo (root bypasses DAC checks).
+        # # Affects py310, py311, py39, with-sslib-main.
+        # "py310", "py311", "py39", "with-sslib-main",
+        # # Python 3.8 incompatible with attrs>=26.0 (project dependency).
+        # "py38",
     },
 }
 
