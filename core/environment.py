@@ -102,6 +102,34 @@ def _invoking_user() -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. Project reset — git clean
 # ──────────────────────────────────────────────────────────────────────────────
+def _looks_like_permission_error(text: str) -> bool:
+    """True if git output indicates it could not touch files due to ownership.
+
+    After a `sudo witness ...` build, leftover files in the project directory
+    are root-owned; a non-root `git clean` then reports 'Permission denied'
+    while trying to open/remove them.
+    """
+    t = text.lower()
+    return "permission denied" in t
+
+
+def _reclaim_ownership(project_dir: Path, owner: str) -> tuple[bool, str]:
+    """chown the project directory back to `owner`, using sudo.
+
+    Needed because eBPF forces builds to run under sudo, so each run leaves
+    root-owned artifacts behind that a later non-root `git clean` cannot
+    remove. Reclaiming ownership lets the normal-user git clean succeed,
+    without ever running git itself as root (which would trip git's
+    "dubious ownership" check).
+
+    Returns (ok, message).
+    """
+    r = _run(["sudo", "chown", "-R", owner, str(project_dir)])
+    if r.returncode == 0:
+        return True, f"reclaimed ownership of {project_dir} to '{owner}'"
+    return False, f"sudo chown failed: {r.stderr.strip() or 'unknown error'}"
+
+
 def reset_project(project_dir: Path, enabled: bool = True) -> tuple[bool, int, list[str]]:
     """Reset a project to a pristine state with `git clean -xfd`.
 
@@ -115,6 +143,13 @@ def reset_project(project_dir: Path, enabled: bool = True) -> tuple[bool, int, l
     This only removes UNTRACKED content. Tracked source files are never
     touched, so a freshly cloned project is unaffected and a re-used project
     is returned to its as-cloned state.
+
+    Root-owned leftovers: a previous run's `sudo witness ...` steps create
+    root-owned files in the project directory. A non-root `git clean` cannot
+    delete those and fails with 'Permission denied'. When that is detected,
+    this function runs `sudo chown -R <user>` once to reclaim ownership, then
+    retries the clean. git itself is never run as root, so git's
+    "dubious ownership" protection is not triggered.
 
     Args:
         project_dir: Project root (must contain a .git directory).
@@ -135,15 +170,38 @@ def reset_project(project_dir: Path, enabled: bool = True) -> tuple[bool, int, l
 
     # --dry-run first so we can count and report what will be removed.
     dry = _run(["git", "clean", "-xfd", "--dry-run"], cwd=project_dir)
+
+    # If the dry-run hit permission errors, reclaim ownership and retry once.
+    if dry.returncode != 0 and _looks_like_permission_error(
+            dry.stderr + dry.stdout):
+        owner = _invoking_user()
+        ok, msg = _reclaim_ownership(project_dir, owner)
+        notes.append(msg)
+        if ok:
+            dry = _run(["git", "clean", "-xfd", "--dry-run"], cwd=project_dir)
+
     if dry.returncode != 0:
-        # Most likely git's "dubious ownership" — surface it clearly.
+        # Still failing — surface the reason (dubious ownership, or a chown
+        # that did not resolve it) and skip rather than abort the experiment.
         msg = dry.stderr.strip() or "git clean --dry-run failed"
         notes.append(f"git clean could not run: {msg}")
         return False, 0, notes
 
-    would_remove = [ln for ln in dry.stdout.splitlines() if ln.startswith("Would remove")]
+    would_remove = [ln for ln in dry.stdout.splitlines()
+                    if ln.startswith("Would remove")]
 
     actual = _run(["git", "clean", "-xfd"], cwd=project_dir)
+
+    # The actual clean can still hit permission errors if new root-owned files
+    # appeared between dry-run and now; reclaim + retry once more.
+    if actual.returncode != 0 and _looks_like_permission_error(
+            actual.stderr + actual.stdout):
+        owner = _invoking_user()
+        ok, msg = _reclaim_ownership(project_dir, owner)
+        notes.append(msg)
+        if ok:
+            actual = _run(["git", "clean", "-xfd"], cwd=project_dir)
+
     if actual.returncode != 0:
         notes.append(f"git clean failed: {actual.stderr.strip()}")
         return False, 0, notes
