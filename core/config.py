@@ -82,19 +82,6 @@ PROJECT_SKIP: dict[str, set[str]] = {
     },
 }
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Trace policy — which steps should / should not use witness --trace.
-#
-# Currently informational: run_step() in witness_runner.py passes --trace
-# unconditionally (matching the old behavior, where get_trace_flag was commented
-# out). These sets are kept so a future change can reintroduce selective tracing
-# without re-deriving the policy.
-# ──────────────────────────────────────────────────────────────────────────────
-NO_TRACE_STEPS: set[str] = {"test", "go-test", "install-tools"}
-DEEP_TRACE_STEPS: set[str] = {"build", "install"}
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Helper: resolve the effective skip set for a project.
 # ──────────────────────────────────────────────────────────────────────────────
