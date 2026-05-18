@@ -56,7 +56,11 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def die(msg: str, code: int = 1) -> None:
+def die(msg: str, code: int = 2) -> None:
+    # Exit code 2 (not 1): a batch runner reads exit 1 as "pipeline ran but no
+    # SBOM" and exit 2 as "could not run the experiment at all" (bad project
+    # path, missing inputs). Keeping these distinct lets the batch summary
+    # report them separately.
     print(f"[experiment] ERROR: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -318,6 +322,16 @@ def main() -> None:
     print(summary)
 
     log(f"Results saved to: {experiment_dir}")
+
+    # ── Exit code ─────────────────────────────────────────────────────────────
+    # The pipeline running to completion is NOT the same as the experiment
+    # succeeding. A batch runner needs to tell apart:
+    #   exit 0 — SBOMs were generated (the experiment's actual goal)
+    #   exit 1 — pipeline ran but produced no usable SBOM
+    # A crash or bad invocation exits non-zero on its own (exception / die()),
+    # so the batch runner sees three outcomes: 0, 1, and "other".
+    sbom_ok = bool(sbom_results) and any(r.success for r in sbom_results.values())
+    sys.exit(0 if sbom_ok else 1)
 
 
 if __name__ == "__main__":
