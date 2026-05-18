@@ -1,0 +1,11 @@
+# projects.txt
+gittuf
+go-tuf
+sbomit
+protobom
+# argo-cd
+# kyverno
+rust-tuf
+python-tuf
+in-toto
+flux2

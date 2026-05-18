@@ -19,11 +19,7 @@ from __future__ import annotations
 # Global skip set — targets never worth attesting, in ANY project.
 # These are Makefile bookkeeping targets, not real build steps.
 # ──────────────────────────────────────────────────────────────────────────────
-GLOBAL_SKIP: set[str] = {
-    # "help", "all", "clean", "distclean", "mrproper",
-    # ".PHONY", ".DEFAULT", ".SUFFIXES",
-}
-
+GLOBAL_SKIP: set[str] = set()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Per-project skip sets — targets to skip for a specific project.
@@ -41,45 +37,11 @@ GLOBAL_SKIP: set[str] = {
 # refactor stays behavior-preserving.
 # ──────────────────────────────────────────────────────────────────────────────
 PROJECT_SKIP: dict[str, set[str]] = {
-    "kyverno": {
-        # "install-tools", "build-images", "ko-build", "docker-build",
-        # "kind-create-cluster", "kind-delete-cluster", "deploy",
-    },
-    "argo-cd": {
-        # "mockgen", "gogen", "protogen", "protogen-fast", "openapigen",
-        # "clientgen", "clidocsgen", "actionsdocsgen", "resourceiconsgen",
-        # "codegen", "codegen-local", "codegen-local-fast",
-        # "notification-catalog", "notification-docs",
-        # "build-ui", "dep-ui", "dep-ui-local", "lint-ui", "lint-ui-local",
-        # "image", "armimage", "builder-image", "test-tools-image",
-        # "test-e2e", "test-e2e-local", "start-e2e", "start-e2e-local",
-        # "debug-test-server", "debug-test-client", "start-test-k8s",
-        # "install-tools-local", "install-test-tools-local",
-        # "install-codegen-tools-local", "install-go-tools-local",
-        # "release", "release-cli", "release-precheck",
-        # "build-docs", "build-docs-local", "serve-docs", "serve-docs-local",
-        # "manifests", "manifests-local",
-        # "checksums", "snyk-container-tests", "snyk-non-container-tests",
-        # "snyk-report", "list", "start", "start-local", "run",
-        # "mod-vendor", "mod-vendor-local", "mod-download-local", "mod-download",
-    },
-    "flux2": {
-        # "setup-kind", "cleanup-kind", "e2e", "test-with-kind",
-        # "install-envtest", "setup-envtest", "envtest",
-        # "setup-bootstrap-patch", "setup-image-automation", "tidy", "mod-tidy",
-    },
-    "protobom": {
-        # "proto",
-        # "help", "conformance-test", "conformance", "fakes",
-        # "buf-format", "buf-lint",
-    },
-    "in-toto": {
-        # # Permission tests fail under sudo (root bypasses DAC checks).
-        # # Affects py310, py311, py39, with-sslib-main.
-        # "py310", "py311", "py39", "with-sslib-main",
-        # # Python 3.8 incompatible with attrs>=26.0 (project dependency).
-        # "py38",
-    },
+    "kyverno":  set(),
+    "argo-cd":  set(),
+    "flux2":    set(),
+    "protobom": set(),
+    "in-toto":  set(),
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -93,6 +55,13 @@ def skip_set_for(project_name: str | None, extra: set[str] | None = None) -> set
       - PROJECT_SKIP[project_name] (if the project has specific rules),
       - extra (e.g. targets passed on the command line via --skip-targets).
 
+    Robustness: GLOBAL_SKIP / PROJECT_SKIP entries are coerced to sets before
+    use. This matters because an empty `{}` in the source is a *dict*, not a
+    set (an empty set must be written `set()`), and commenting out every entry
+    of a `{...}` block silently leaves an empty dict behind. Coercing here
+    means such a slip degrades to "skip nothing", not a TypeError that blocks
+    every configured project.
+
     Args:
         project_name: Project directory name, or None.
         extra:        Additional step names to skip (optional).
@@ -101,8 +70,14 @@ def skip_set_for(project_name: str | None, extra: set[str] | None = None) -> set
         A new set; callers may mutate it freely.
     """
     result: set[str] = set(GLOBAL_SKIP)
+
     if project_name and project_name in PROJECT_SKIP:
-        result |= PROJECT_SKIP[project_name]
+        entry = PROJECT_SKIP[project_name]
+        # set(dict) yields the dict's KEYS, so a properly-written skip set and
+        # an accidental empty/explicit dict both coerce sensibly here.
+        result |= set(entry)
+
     if extra:
-        result |= extra
+        result |= set(extra)
+
     return result
