@@ -176,38 +176,191 @@ def collect(src_dir: Path, dst_dir: Path) -> CollectResult:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Analysis (placeholder seam)
+# Analysis — extracting what a build actually used
 # ──────────────────────────────────────────────────────────────────────────────
+#
+# Attestation schema (confirmed against a real go-tuf build attestation):
+#
+#   payload
+#     predicate
+#       attestations[]                       <- list of sub-attestations
+#         { type: ".../command-run/v0.1",
+#           attestation: {
+#             cmd, stdout, exitcode,
+#             processes[]                     <- one per process the build ran
+#               { processid, parentpid,
+#                 openedfiles: {              <- files THIS process opened
+#                   "<path>": {"sha256": "..."},
+#                   ...
+#                 }
+#               }
+#           }
+#         }
+#
+# extract_used_files() collects every openedfiles path across every process.
+# extract_used_packages() then classifies those paths (Go module / system /
+# other) and turns Go module-cache paths into package@version identifiers.
+
+COMMAND_RUN_TYPE_SUBSTR = "command-run"
+
+
+def _load_decoded(decoded_path: Path) -> dict:
+    """Load a decoded attestation file, returning {} on any error.
+
+    decode() may produce a file whose `payload` is already a dict; this just
+    reads JSON, so it works regardless.
+    """
+    try:
+        with open(decoded_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def extract_used_files(decoded_path: Path) -> list[str]:
-    """Extract the files/packages actually used during a build, from a decoded
-    attestation's eBPF environment-attestor data.
+    """Return every file path the build opened, from a decoded attestation.
 
-    PLACEHOLDER — not yet implemented. Returns [] for now.
-
-    What this is for:
-        decode() only unwraps the DSSE envelope so the in-toto Statement is
-        readable. Pulling the *meaningful* information out of that Statement —
-        which files were opened, which packages were read during the build —
-        is a separate concern, and this is its home (next to decoding, not in
-        the experiment orchestrator).
-
-    Why it is not implemented yet:
-        The list lives inside the in-toto Statement's `predicate`, written by
-        witness's eBPF attestor. Its exact JSON shape depends on the witness
-        version and attestor configuration, so this must be written against a
-        real decoded attestation (experiments/<project>/attestations/decoded/
-        *.decoded.json), not guessed.
-
-        NOTE: an earlier version of this docstring referred to a "ptrace
-        module". That was carried over from pre-eBPF documentation; the
-        pipeline uses the eBPF attestor now. The data source is the eBPF
-        attestor's output, not ptrace.
+    Walks predicate.attestations[] for the command-run sub-attestation, then
+    unions the openedfiles keys of every process. The result is the raw set of
+    files touched during the build — packages, source, system libraries,
+    /proc, telemetry, everything. Refining this into packages is the job of
+    extract_used_packages().
 
     Args:
         decoded_path: A file produced by decode().
 
     Returns:
-        Currently always []. To be implemented against the real attestation
-        schema as part of the SBOM-coverage work.
+        Sorted list of unique file paths. Empty if the file is missing,
+        unparseable, or has no command-run data.
     """
-    return []
+    data = _load_decoded(decoded_path)
+    payload = data.get("payload", {})
+    if not isinstance(payload, dict):
+        return []
+
+    predicate = payload.get("predicate", {})
+    sub_attestations = predicate.get("attestations", []) \
+        if isinstance(predicate, dict) else []
+
+    files: set[str] = set()
+    for sub in sub_attestations:
+        if not isinstance(sub, dict):
+            continue
+        if COMMAND_RUN_TYPE_SUBSTR not in str(sub.get("type", "")):
+            continue
+        att = sub.get("attestation", {})
+        if not isinstance(att, dict):
+            continue
+        for proc in att.get("processes", []):
+            if not isinstance(proc, dict):
+                continue
+            opened = proc.get("openedfiles", {})
+            if isinstance(opened, dict):
+                files.update(opened.keys())
+
+    return sorted(files)
+
+
+# ── Path classification ───────────────────────────────────────────────────────
+# Category labels for a file path.
+CAT_GO_MODULE   = "go_module"     # under the Go module cache — a real dependency
+CAT_SYSTEM_LIB  = "system_lib"    # /usr, /lib — system shared libraries
+CAT_PROJECT     = "project"       # inside the project's own source tree
+CAT_OTHER       = "other"         # /proc, /sys, telemetry, caches, etc. — noise
+
+
+def _classify_path(path: str) -> str:
+    """Classify a single file path into one of the CAT_* categories."""
+    if "/go/pkg/mod/" in path:
+        return CAT_GO_MODULE
+    if path.startswith("/usr/") or path.startswith("/lib/"):
+        return CAT_SYSTEM_LIB
+    if "/sbomit/projects/" in path:
+        return CAT_PROJECT
+    return CAT_OTHER
+
+
+def _path_to_go_package(path: str) -> Optional[str]:
+    """Turn a Go module-cache path into a 'module@version' identifier.
+
+    Go stores modules under two layouts; both carry the module path and the
+    version, so both are handled:
+
+      .../go/pkg/mod/cache/download/<module>/@v/<version>.<ext>
+          -> module = <module>, version = <version>
+
+      .../go/pkg/mod/<module>@<version>/<file...>
+          -> module = <module>, version = <version>
+
+    Returns None if the path is under the module cache but does not match a
+    recognized layout (e.g. cache/lock files).
+    """
+    marker = "/go/pkg/mod/"
+    idx = path.find(marker)
+    if idx == -1:
+        return None
+    rest = path[idx + len(marker):]
+
+    # Layout 1: cache/download/<module>/@v/<version>.<ext>
+    dl_prefix = "cache/download/"
+    if rest.startswith(dl_prefix):
+        rest2 = rest[len(dl_prefix):]
+        if "/@v/" in rest2:
+            module, after = rest2.split("/@v/", 1)
+            version = after.rsplit(".", 1)[0]  # strip .info/.mod/.zip/.ziphash
+            if module and version:
+                return f"{module}@{version}"
+        return None
+
+    # Layout 2: <module>@<version>/<file...>
+    if "@" in rest:
+        before_slash = rest.split("/", 1)[0]  # "<module>@<version>" segment
+        if "@" in before_slash:
+            module, version = before_slash.rsplit("@", 1)
+            if module and version:
+                return f"{module}@{version}"
+    return None
+
+
+def extract_used_packages(decoded_path: Path) -> dict:
+    """Classify a build's opened files and extract Go module packages.
+
+    Builds on extract_used_files(): every opened path is sorted into a
+    category, Go module-cache paths are further resolved to package@version
+    identifiers.
+
+    The non-Go categories are COUNTED, not discarded. This is deliberate — if
+    a Python or Rust project is analyzed, 'go_packages' will be empty but
+    'category_counts' still shows hundreds of 'other'/'system_lib' paths,
+    making it obvious that the Go-specific resolver simply did not apply
+    (rather than misreading it as "this step used nothing").
+
+    Args:
+        decoded_path: A file produced by decode().
+
+    Returns:
+        {
+          "go_packages": sorted list of "module@version" strings,
+          "category_counts": {go_module, system_lib, project, other: int},
+          "total_files": int,   # total unique opened files
+        }
+    """
+    files = extract_used_files(decoded_path)
+
+    counts = {CAT_GO_MODULE: 0, CAT_SYSTEM_LIB: 0,
+              CAT_PROJECT: 0, CAT_OTHER: 0}
+    go_packages: set[str] = set()
+
+    for path in files:
+        category = _classify_path(path)
+        counts[category] += 1
+        if category == CAT_GO_MODULE:
+            pkg = _path_to_go_package(path)
+            if pkg:
+                go_packages.add(pkg)
+
+    return {
+        "go_packages": sorted(go_packages),
+        "category_counts": counts,
+        "total_files": len(files),
+    }
