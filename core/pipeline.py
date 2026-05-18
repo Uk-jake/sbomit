@@ -35,6 +35,16 @@ from .models import ProjectResult, StepResult, STATUS_SKIPPED
 from .witness_runner import run_step
 
 
+class PipelineConfigError(Exception):
+    """Raised when run() is given a configuration it cannot honor.
+
+    Currently: an `only` filter naming step(s) that the project does not have.
+    pipeline.run() raises this instead of calling sys.exit, so the experiment
+    driver (one layer up) decides how to report and what exit code to use —
+    keeping pipeline.py free of process-exit concerns.
+    """
+
+
 # ── Default locations ─────────────────────────────────────────────────────────
 # SBOMIT_DIR is where witness, the signing key, and the attestations/ tree live.
 # It can be overridden via the environment, matching experiment.py's convention.
@@ -51,6 +61,7 @@ def run(project_dir: Path,
         do_git_clean: bool = True,
         do_go_cache: bool = True,
         do_warm: bool = True,
+        only: Optional[set[str]] = None,
         witness_path: Optional[str] = None,
         signing_key: Optional[Path] = None,
         attestations_root: Optional[Path] = None) -> ProjectResult:
@@ -67,6 +78,13 @@ def run(project_dir: Path,
                            Default True.
         do_warm:           Warm Go / Cargo dependency caches before building.
                            Default True.
+        only:              If given, attest ONLY these step names; every other
+                           detected step is skipped. This is the inverse of
+                           skip_targets — useful for quickly checking just the
+                           build step of a large project. If any name in `only`
+                           is not a step of this project, PipelineConfigError
+                           is raised (a typo should fail loudly, not silently
+                           produce an empty experiment).
         witness_path:      Path to the witness binary (auto-resolved if None).
         signing_key:       Path to the signing key (defaults to
                            SBOMIT_DIR/signing.key).
@@ -77,6 +95,9 @@ def run(project_dir: Path,
         A ProjectResult. Steps that fail to build are recorded as failed and
         the pipeline continues — a failed step is a normal outcome, not an
         error that aborts the run.
+
+    Raises:
+        PipelineConfigError: if `only` names a step the project does not have.
     """
     project_dir = project_dir.resolve()
     project_name = project_dir.name
@@ -117,6 +138,21 @@ def run(project_dir: Path,
         print(f"WARNING: no build steps derived for {project_name}")
 
     skip_set = config.skip_set_for(project_name, extra=skip_targets)
+
+    # `only` is the inverse of skip: keep the named steps, skip everything else.
+    # Implemented by adding every non-`only` step to skip_set, so the existing
+    # skip path below handles it — no separate code path.
+    if only:
+        all_step_names = {name for name, _ in steps}
+        unknown = only - all_step_names
+        if unknown:
+            # Fail loudly: a mistyped --only should not silently run nothing.
+            raise PipelineConfigError(
+                f"--only names step(s) not in project '{project_name}': "
+                f"{', '.join(sorted(unknown))}. "
+                f"Available steps: {', '.join(sorted(all_step_names))}"
+            )
+        skip_set |= (all_step_names - only)
 
     # ── Run from inside the project directory ─────────────────────────────────
     # witness / make / go are invoked with the project as the working dir.

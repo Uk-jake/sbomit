@@ -232,6 +232,14 @@ def main() -> None:
         "--skip-targets", default="",
         help="Comma-separated extra step names to skip.",
     )
+    parser.add_argument(
+        "--only", default="",
+        help="Comma-separated step names to run EXCLUSIVELY; every other "
+             "detected step is skipped. Useful for checking just the build "
+             "step of a large project, e.g. --only build. If a named step "
+             "does not exist in the project, the run aborts and lists the "
+             "available steps.",
+    )
     # Hygiene toggles — default on, surfaced for debugging (see environment.py).
     parser.add_argument("--no-git-clean", action="store_true",
                         help="Do not run 'git clean -xfd' before building.")
@@ -263,17 +271,27 @@ def main() -> None:
     log("=" * 60)
 
     skip_targets = {t.strip() for t in args.skip_targets.split(",") if t.strip()}
+    only = {t.strip() for t in args.only.split(",") if t.strip()}
 
     # ── Step 1: run the attestation pipeline ──────────────────────────────────
     # No subprocess, no stdout parsing — a ProjectResult comes back directly.
     log("Step 1: running attestation pipeline")
-    project_result = pipeline.run(
-        project_path,
-        skip_targets=skip_targets,
-        do_git_clean=not args.no_git_clean,
-        do_go_cache=not args.no_go_cache,
-        do_warm=not args.no_warm,
-    )
+    if only:
+        log(f"  --only active: running just {sorted(only)}")
+    try:
+        project_result = pipeline.run(
+            project_path,
+            skip_targets=skip_targets,
+            only=only or None,
+            do_git_clean=not args.no_git_clean,
+            do_go_cache=not args.no_go_cache,
+            do_warm=not args.no_warm,
+        )
+    except pipeline.PipelineConfigError as e:
+        # A bad --only (a step name that does not exist) is a user mistake;
+        # die() exits 2 so the batch / caller sees "could not run", not
+        # "ran but produced no SBOM".
+        die(str(e))
     log(f"  build system: {project_result.build_system}")
     log(f"  steps: {len(project_result.ok_steps)} ok, "
         f"{len(project_result.failed_steps)} failed, "
