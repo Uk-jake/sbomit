@@ -9,6 +9,7 @@ witness
 # Generated fresh for each run. Add exceptions if you need to retain results.
 attestations/
 experiments/
+nohups/
 
 # ── Target Projects ───────────────────────────────────────────────────────────
 # Cloned projects are independent repositories and should not be tracked here.

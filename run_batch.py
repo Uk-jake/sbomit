@@ -99,21 +99,29 @@ def already_done(project: str) -> bool:
     return (EXPERIMENTS_DIR / project / "summary.txt").exists()
 
 
-def run_one(project: str) -> tuple[str, float]:
+def run_one(project: str, only: str = "") -> tuple[str, float]:
     """Run experiment.py for a single project as a child process.
+
+    Args:
+        project: Project directory name.
+        only:    If non-empty, passed straight through as experiment.py's
+                 --only value (comma-separated step names). The batch does not
+                 interpret it — experiment.py / pipeline.py validate it, and a
+                 bad step name comes back as exit 2 (-> OUTCOME_ERROR).
 
     Returns (outcome_label, duration_seconds). Never raises for an ordinary
     experiment failure — the failure is encoded in the returned label.
     """
     t0 = time.time()
 
+    cmd = [sys.executable, str(EXPERIMENT_PY), "--project", project]
+    if only:
+        cmd += ["--only", only]
+
     # The child inherits stdout/stderr, so its log streams to the console
     # live — the batch does not capture or hide it.
     try:
-        proc = subprocess.run(
-            [sys.executable, str(EXPERIMENT_PY), "--project", project],
-            cwd=SCRIPT_DIR,
-        )
+        proc = subprocess.run(cmd, cwd=SCRIPT_DIR)
         outcome = classify(proc.returncode)
     except KeyboardInterrupt:
         # Let Ctrl-C abort the whole batch cleanly.
@@ -142,6 +150,14 @@ def main() -> None:
         "--force", action="store_true",
         help="Re-run projects that already have results in experiments/.",
     )
+    parser.add_argument(
+        "--only", default="",
+        help="Comma-separated step names to run EXCLUSIVELY, applied to every "
+             "project in the batch (passed through to experiment.py --only). "
+             "Useful for checking just the build step across many large "
+             "projects, e.g. --only build. A project that lacks a named step "
+             "is reported as ERROR.",
+    )
     args = parser.parse_args()
 
     projects = read_project_list(Path(args.list))
@@ -153,6 +169,8 @@ def main() -> None:
     log(f"SBOMit batch — {len(projects)} project(s) listed")
     log(f"  list file : {args.list}")
     log(f"  force     : {args.force}")
+    if args.only:
+        log(f"  only      : {args.only}")
     log("=" * 56)
 
     # results: project -> (outcome, duration)
@@ -177,7 +195,7 @@ def main() -> None:
             continue
 
         log(f"{prefix}: starting")
-        outcome, duration = run_one(project)
+        outcome, duration = run_one(project, only=args.only)
         results[project] = (outcome, duration)
         log(f"{prefix}: {outcome} ({duration}s)")
 
