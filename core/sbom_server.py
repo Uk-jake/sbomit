@@ -31,6 +31,7 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+import requests as _requests
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -132,30 +133,57 @@ class SbomServer:
         ])
         return r.returncode == 0
 
+    # def upload(self, attestation_files: list[Path]) -> UploadResult:
+    #     """Upload a batch of attestation files to the server.
+
+    #     Args:
+    #         attestation_files: Paths to the (original, signed) attestation
+    #                            JSON files to upload.
+
+    #     Returns:
+    #         An UploadResult with counts and any per-file notes.
+    #     """
+    #     result = UploadResult(attempted=len(attestation_files))
+
+    #     for f in attestation_files:
+    #         r = self._curl([
+    #             "-X", "POST", f"{self.url}/attestations",
+    #             *self._auth_header(),
+    #             "-H", "Content-Type: application/json",
+    #             "-d", f"@{f}",
+    #         ], timeout=60)
+    #         if r.returncode == 0:
+    #             result.succeeded += 1
+    #         else:
+    #             msg = r.stderr.strip() or f"curl exit {r.returncode}"
+    #             result.notes.append(f"upload failed for {f.name}: {msg}")
+
+    #     return result
     def upload(self, attestation_files: list[Path]) -> UploadResult:
-        """Upload a batch of attestation files to the server.
-
-        Args:
-            attestation_files: Paths to the (original, signed) attestation
-                               JSON files to upload.
-
-        Returns:
-            An UploadResult with counts and any per-file notes.
-        """
         result = UploadResult(attempted=len(attestation_files))
 
         for f in attestation_files:
-            r = self._curl([
-                "-X", "POST", f"{self.url}/attestations",
-                *self._auth_header(),
-                "-H", "Content-Type: application/json",
-                "-d", f"@{f}",
-            ], timeout=60)
-            if r.returncode == 0:
-                result.succeeded += 1
-            else:
-                msg = r.stderr.strip() or f"curl exit {r.returncode}"
-                result.notes.append(f"upload failed for {f.name}: {msg}")
+            try:
+                # 파일을 스트리밍으로 전송 — 메모리에 전체 로드 안 함
+                with open(f, "rb") as fh:
+                    resp = _requests.post(
+                        f"{self.url}/attestations",
+                        data=fh,          # ← 스트리밍: 청크 단위로 읽으며 전송
+                        headers={
+                            "Authorization": f"Bearer {self.token}",
+                            "Content-Type": "application/json",
+                        },
+                        timeout=self.timeout,
+                        stream=True,
+                    )
+                if resp.status_code == 200:
+                    result.succeeded += 1
+                else:
+                    result.notes.append(
+                        f"upload failed for {f.name}: HTTP {resp.status_code}"
+                    )
+            except Exception as e:
+                result.notes.append(f"upload failed for {f.name}: {e}")
 
         return result
 
