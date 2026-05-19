@@ -47,6 +47,32 @@ def is_fake_target(target: str) -> bool:
     return bool(re.match(r'^[A-Z][A-Z0-9_]+$', target))
 
 
+def _strip_define_blocks(content: str) -> str:
+    """Remove `define ... endef` template blocks from Makefile content.
+
+    Make's `define` directive declares a multi-line variable / canned recipe.
+    The lines inside it (including any `.PHONY:` or `target:` lines) are a
+    template, not real targets — the positional vars ($(1), $(5), ...) are only
+    substituted when the block is later expanded via $(call ...). Scanning
+    inside these blocks produces bogus targets such as "$(5)/$(1)" and
+    "modtidy-$(1)", so the whole block is dropped before target extraction.
+    """
+    lines = content.split('\n')
+    kept: list[str] = []
+    in_define = False
+    for line in lines:
+        # `define NAME` opens a block; `endef` closes it. Both are directives
+        # that may start after optional leading whitespace.
+        if re.match(r'^\s*define\s+', line):
+            in_define = True
+            continue
+        if re.match(r'^\s*endef\b', line):
+            in_define = False
+            continue
+        if not in_define:
+            kept.append(line)
+    return '\n'.join(kept)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Makefile
 # ──────────────────────────────────────────────────────────────────────────────
@@ -70,13 +96,23 @@ def parse_makefile(path: str | Path) -> dict[str, list[str]]:
         print(f"Error reading {path}: {e}", file=sys.stderr)
         return {}
 
+    # Drop `define ... endef` template blocks before any target extraction:
+    # their inner lines are templates with unsubstituted vars, not real targets.
+    content = _strip_define_blocks(content)
+
     targets: dict[str, list[str]] = {}
 
     # Collect .PHONY declarations.
     phony: set[str] = set()
     for m in re.finditer(r'^\.PHONY\s*:\s*(.+)$', content, re.MULTILINE):
         for t in m.group(1).split():
-            phony.add(t.strip())
+            t = t.strip()
+            # Skip unresolved Make variables: ".PHONY: $(phony)" lists a
+            # variable, not literal target names. Such tokens ($(...), ${...})
+            # are not runnable targets and must not become steps.
+            if '$(' in t or '${' in t:
+                continue
+            phony.add(t)
 
     # Collect explicit target definitions (lines like "target: deps").
     #
